@@ -1,0 +1,1 @@
+extern "C"  void FindFirst(char* start, char* last,char** first_pos, char** last_pos, bool lazy);

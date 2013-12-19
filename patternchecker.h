@@ -20,17 +20,24 @@ class PatternChecker{
     pair<char*, char*> IndexIn(char* first, size_t len,bool lazy=true){//lazy-самую первую
         if(len<1)return pair<char*, char*>(NULL,NULL);
         for(char* next_start_pos=first;next_start_pos<first+len;++next_start_pos){
-            State* state=atomata.GetStart();
             char* last_end=NULL;
+            State* state=atomata.GetStart();
+            if(state->isFinal()){
+                last_end=first;
+                if(lazy){
+                    return pair<char*, char*>(next_start_pos, last_end);
+                }
+            }
             for(char* pos=next_start_pos;pos<first+len;++pos){
+                state=atomata.Step(state,*pos);
+                if(!state)break;
                 if(state->isFinal()){
-                    last_end=pos-1;
+                    last_end=pos;
                     if(lazy){
                         return pair<char*, char*>(next_start_pos, last_end);
                     }
                 }
-                state=atomata.Step(state,*pos);
-                if(!state)break;
+
             }
             if(last_end)
                 return pair<char*, char*>(next_start_pos, last_end);

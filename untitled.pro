@@ -4,7 +4,7 @@
 #
 #-------------------------------------------------
 
-QT       -= core
+QT       += core
 
 QT       -= gui
 
@@ -31,4 +31,5 @@ win32:{
 unix:{
     DEFINES +=UNIX
     LIBS += -lboost_regex
+    #LIBS += /home/stiv/ttt/untitled/gen_find_lib/libfind_lib.a
 }

@@ -1,9 +1,7 @@
 #include "automata.h"
 //TEMP
 #include <iostream>
-#include <sstream>
 #include <string>
-#include <time.h>
 void Automata::Clear(){
     set<State*>::iterator it=all_states.begin();
     for(;it!=all_states.end();++it){
@@ -11,6 +9,163 @@ void Automata::Clear(){
     }
 }
 
+bool Automata::ToCCode(ostream& ost,std::string& libname){
+    if(!dfa)return false;
+    ost<<"#include \""<<libname<<".h\""<<endl;
+    ost<<"extern \"C\" void FindFirst(char* start, char* last,char** first_pos, char** last_pos, bool lazy){"<<endl;
+    ost<<"\t*first_pos=start-1;"<<endl;
+    ost<<"\tchar* pos=start;"<<endl;
+    ost<<"\t*last_pos=0;"<<endl;
+    ost<<"\tgoto start_State;"<<endl;
+    ost<<"\tget_new_start_or_return:"<<endl;
+    ost<<"\tif(*last_pos)return; //match"<<endl;
+    ost<<"\t++(*first_pos);"<<endl;
+    ost<<"\tpos=*first_pos-1;"<<endl;
+    ost<<"\tif(pos>last)return;"<<endl;
+    ost<<"\tgoto start_State;"<<endl;
+    //генерируем для всех состояний переходы
+    ost<<endl<<endl;
+    for(set<State*>::iterator it=all_states.begin();it!=all_states.end();++it){
+        if(*it==start)
+            ost<<"\tstart_State";
+        else
+            ost<<"\tL"<<((size_t)(*it));
+        ost<<":"<<endl;
+        if((*it)->isFinal()){
+            ost<<"\t*last_pos=pos;"<<endl;
+            ost<<"\tif(lazy)return;"<<endl;
+        }
+        ost<<"\tif(++pos>last)return;"<<endl;
+        ost<<"\tswitch(*pos){"<<endl;
+        //код для всех переходов
+         vector<Transition>& transitions=(*it)->getTransitions();
+         for(vector<Transition>::iterator tit=transitions.begin();tit!=transitions.end();++tit){
+                 ost<<"\t\tcase "<<(int)tit->Signal()<<":goto ";
+                 if(tit->To()==start){
+                     ost<<"start_State;"<<endl;
+                 }else{
+                     ost<<"L"<<((size_t)(tit->To()))<<";"<<endl;
+                 }
+         }
+        ost<<"\tdefault:goto get_new_start_or_return;}"<<endl;
+        ost<<endl<<endl;
+    }
+    ost<<"}"<<endl;
+    return true;
+}
+State* GetNextState(queue<State*>& next_states,set<State*>& TraversedStates){
+    if(!next_states.size())return 0;
+    State* nstate=next_states.front();
+    next_states.pop();
+    TraversedStates.insert(nstate);
+    vector<Transition>& transitions=nstate->getTransitions();
+    vector<Transition>::iterator it=transitions.begin();
+    for(;it!=transitions.end();++it){
+        if(!TraversedStates.count(it->to))
+            next_states.push(it->to);
+    }
+    return nstate;
+}
+boost::shared_array<char> Automata::ToByteCode(int *len){
+    if(!dfa){
+        *len=0;
+        return boost::shared_array<char>(0);}
+    /*FORMAT: |1b isFinal|2b ushort size=sum(len sig+index)|char sig|ulong index of next state|......*/
+    vector<char> blob;
+    blob.reserve(all_states.size()*(3+sizeof(unsigned int)+sizeof(char)*4));
+    //формируем автомат,начиная с старт обходим весь автомат, первый обход без адресов
+    queue<State*> next_states;set<State*> TraversedStates;next_states.push(start);
+    State* next_state;
+    map<State*, size_t> stetes_position;
+    map<State*, set<char*> > indexex_of_state_links;
+    while((next_state=GetNextState(next_states,TraversedStates))!=0){
+        //добаляем следующее состояние
+        stetes_position[next_state]=blob.size();
+        char final=(next_state->isFinal());
+        blob.push_back(final);
+        size_t len_index=blob.size();
+        blob.resize(blob.size()+sizeof(unsigned short));
+        unsigned short state_size=0;
+        vector<Transition>& transitions=next_state->getTransitions();
+        for(vector<Transition>::iterator tit=transitions.begin();
+                tit!=transitions.end();++tit){
+            blob.push_back(tit->Signal());
+            indexex_of_state_links[tit->To()].insert(&(blob.back())+1);
+            blob.resize(blob.size()+sizeof(unsigned int));
+            state_size+=sizeof(unsigned int)+sizeof(char);
+        }
+        *((unsigned short*)(&(blob[len_index])))=state_size;
+    }
+    //проставляем индексы для всех ссылок;
+    for(map<State*, size_t>::iterator it=stetes_position.begin();
+                it!=stetes_position.end();++it){
+        if(!indexex_of_state_links.count(it->first))continue;
+        for(set<char*>::iterator sit=indexex_of_state_links[it->first].begin();
+                    sit!=indexex_of_state_links[it->first].end();++sit){
+            unsigned int* index_pointer=(unsigned int*)(*sit);
+            *index_pointer=it->second;
+        }
+    }
+    char* blob_flat_memory=new char[blob.size()];
+    memcpy(blob_flat_memory,&(blob[0]),blob.size());
+    *len=blob.size();
+    return boost::shared_array<char>(blob_flat_memory);
+}
+inline long long GetNextPosition(char* block_pos, char* pos){
+    unsigned short signals_size=*((unsigned short*)block_pos);
+    block_pos+=sizeof(unsigned short);
+    long long position=-1;
+    unsigned short treversed_signals_size=0;
+    while(treversed_signals_size<signals_size){
+        unsigned long long block=*((unsigned long long*)block_pos);
+        char singal1=(char)(block&0x00000000000000ff);
+        char signal2=(char)((block>>8*5)&0x00000000000000ff);
+        if(singal1==(*pos)){
+            position=(unsigned int)((block>>8)&0x00000000ffffffff);
+            break;
+        }
+        treversed_signals_size+=5;
+        if(treversed_signals_size>=signals_size)break;
+        if(signal2==(*pos)){
+            position=*((unsigned int*)(block_pos+6));
+            break;
+        }
+        treversed_signals_size+=sizeof(unsigned int)+sizeof(char);
+        block_pos+=(sizeof(unsigned int)+sizeof(char))*2;
+    }
+    return position;
+}
+bool Automata::FindFirstByByteCode(char* blob,char* start, char* last,char** first_pos, char** last_pos, bool lazy){
+    char*pos=start;
+    *first_pos=start;
+    *last_pos=0;
+    char* block_pos=blob;
+
+    while(true){
+        char is_final;
+        is_final=*(block_pos++);
+        if(is_final){
+            *last_pos=pos;
+            if(lazy)break;
+        }
+
+        long long position=GetNextPosition(block_pos,pos);
+        if(position==-1){//нет переходя по сигналу
+            if(*last_pos)break;
+            ++(*first_pos);
+            pos=(*first_pos);
+            block_pos=blob;
+            if(pos>=last)break;
+        }else{//найден переход
+            ++pos;
+            if(pos>=last)break;
+            block_pos=blob+position;
+        }
+    }
+    return (*last_pos);
+
+
+}
 
 State* Automata::CreateState(bool final, set<State*>* state_set){
     State* state=new State(final);
@@ -93,8 +248,25 @@ void Automata::EpsilonNFAToNFA(){
             new_finals.insert(*sit);
         }
     }
+    //3)удаляем все недостижимые состояния из автомата(состояния на которые указывали только эпсилон переходы) TODO test
+    while(true){
+        bool there_is_no_unachievable_states=true;
+        set<State*>::iterator it= all_states.begin();
+        while(it!=all_states.end()){
+            if((*it)!=start && !(*it)->getToThisStateLink().size()){
+                (*it)->ClearTransitions(all_states);
+                DeleteState(*it,false);
+                there_is_no_unachievable_states=false;
+                all_states.erase(it++);
+            }else{
+                ++it;
+            }
+        }
+        if(there_is_no_unachievable_states)break;
+    }
+/*
     set<State*> reachableStates=GetReachableStates();
-    //3)удаляем все недостижимые состояния из автомата(состояния на которые указывали только эпсилон переходы)
+
     vector<State*> stateToDelete;
     stateToDelete.resize(all_states.size()-reachableStates.size());
     set_difference(all_states.begin(),all_states.end(),reachableStates.begin(),reachableStates.end(),stateToDelete.begin());
@@ -102,8 +274,10 @@ void Automata::EpsilonNFAToNFA(){
     for(vector<State*>::iterator it=stateToDelete.begin();it!=stateToDelete.end();++it){
         DeleteState(*it,false);
     }
+
+*/
     finals.clear();
-    set_intersection(new_finals.begin(),new_finals.end(),reachableStates.begin(),reachableStates.end(),inserter(finals,finals.begin()));
+    set_intersection(new_finals.begin(),new_finals.end(),all_states.begin(),all_states.end(),inserter(finals,finals.begin()));
 }
 void Automata::getNewStateTypeTransitions(TODFAStateType& state, TODFATarnsitions& transitions){
     TODFAStateType::iterator sit=state.begin();
@@ -223,29 +397,29 @@ void Automata::MergeStatesOutputSignals(State* fstate,State* sstate){
 }
 void Automata::MergeStatesInputSignals(State* fstate,State* sstate){
     map<State*, set<char> > link_to_fstate;
-    set<State*>& f_toThisStateLink=fstate->getToThisStateLink();
-    for(set<State*>::iterator it=f_toThisStateLink.begin();it!=f_toThisStateLink.end();++it){
-        vector<Transition>& transitions=(*it)->getTransitions();
+    set<pair<State*, char> >& f_toThisStateLink=fstate->getToThisStateLink();
+    for(set<pair<State*, char> >::iterator it=f_toThisStateLink.begin();it!=f_toThisStateLink.end();++it){
+        vector<Transition>& transitions=(it->first)->getTransitions();
         for(vector<Transition>::iterator tit=transitions.begin();tit!=transitions.end();++tit){
             if(tit->to==fstate){
-                link_to_fstate[*it].insert(tit->signal);
+                link_to_fstate[it->first].insert(tit->Signal());
             }
         }
 
     }
     //переставляем все связи указывающие на младщенького
-    set<State*>& s_toThisStateLink=sstate->getToThisStateLink();
-    for(set<State*>::iterator it=s_toThisStateLink.begin();it!=s_toThisStateLink.end();++it){
-        vector<Transition>& transitions=(*it)->getTransitions();
+    set<pair<State*, char> >& s_toThisStateLink=sstate->getToThisStateLink();
+    for(set<pair<State*, char> >::iterator it=s_toThisStateLink.begin();it!=s_toThisStateLink.end();++it){
+        vector<Transition>& transitions=it->first->getTransitions();
 
         for(vector<Transition>::iterator tit=transitions.begin();tit!=transitions.end();++tit){
             if(tit->to==sstate){
-                if(link_to_fstate.count(*it)&&link_to_fstate[*it].count(tit->signal)){
+                if(link_to_fstate.count(it->first)&&link_to_fstate[it->first].count(tit->signal)){
                     tit=transitions.erase(tit);
                     --tit;
                 }else{
                     tit->setTo(fstate);
-                    fstate->getToThisStateLink().insert(*it);
+                    fstate->getToThisStateLink().insert(make_pair(it->first,tit->Signal()));
                 }
             }
         }
@@ -408,9 +582,9 @@ void Automata::Union(Automata& automata){
 
         State* old_final=automata.finals.front();
         State* new_final=finals.front();
-        set<State*>& fin_to_state=old_final->getToThisStateLink();
-        for(set<State*>::iterator it=fin_to_state.begin();it!=fin_to_state.end();++it){
-            vector<Transition>& transition=(*it)->getTransitions();
+        set<pair<State*, char> >& fin_to_state=old_final->getToThisStateLink();
+        for(set<pair<State*, char> >::iterator it=fin_to_state.begin();it!=fin_to_state.end();++it){
+            vector<Transition>& transition=it->first->getTransitions();
             vector<Transition>::iterator tit=transition.begin();
             for(;tit!=transition.end();++tit){
                 if(tit->to==old_final){

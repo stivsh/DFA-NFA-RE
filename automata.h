@@ -8,9 +8,11 @@
 #include <algorithm>
 #include <state.h>
 #include <poolalloc.h>
+#include <cstring>
 using namespace std;
 #include <boost/unordered_map.hpp>
 #include <boost/unordered_set.hpp>
+#include <boost/shared_array.hpp>
 class PreciseDistinguashbleStatesCollection{
     typedef boost::unordered::unordered_set<pair<size_t,size_t> > set_type;
     typedef boost::unordered::unordered_map<size_t, set_type > map_type;
@@ -82,6 +84,35 @@ class Automata{
     void getDependedStates(DistinguashbleStatesCollection& dependentStates);
     void OptimizeDFA();
 public:
+    Automata(Automata& a_obj){
+        start=a_obj.start;
+        finals=a_obj.finals;
+        min=a_obj.min;
+        dfa=a_obj.dfa;
+        all_states=a_obj.all_states;
+
+        a_obj.start=0;
+        a_obj.finals.clear();
+        a_obj.all_states.clear();
+
+    }
+    Automata& operator=(Automata& a_src){
+        start=a_src.start;
+        finals=a_src.finals;
+        min=a_src.min;
+        dfa=a_src.dfa;
+        all_states=a_src.all_states;
+
+        a_src.start=0;
+        a_src.finals.clear();
+        a_src.all_states.clear();
+
+        return *this;
+    }
+
+    bool ToCCode(ostream& ost,std::string& libname);
+    boost::shared_array<char> ToByteCode(int *len);
+    static bool FindFirstByByteCode(char* blob,char* start, char* last,char** first_pos, char** last_pos, bool lazy);
     State* GetStart(){return start;}
     State* Step(State* state, char signal){
         vector<Transition>& transition=state->getTransitions();

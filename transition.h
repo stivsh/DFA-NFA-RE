@@ -14,6 +14,13 @@ public:
     void setTo(State* state){
         to=state;
     }
+    char Signal(){
+        return signal;
+    }
+
+    State* To(){
+        return to;
+    }
 };
 
 #endif // TRANSITION_H
