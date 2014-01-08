@@ -1,0 +1,2 @@
+date; g++ -O3 -c find_lib.c; date
+ar cr libfind_lib.a find_lib.o

@@ -1,1 +1,1 @@
-extern "C"  void FindFirst(char* start, char* last,char** first_pos, char** last_pos, bool lazy);
+extern "C" void find_first_lib(char* start, char* last,char** begin, char** end, bool lazy);

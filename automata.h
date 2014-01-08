@@ -1,6 +1,8 @@
 #ifndef AUTOMATA_H
 #define AUTOMATA_H
 #include <state.h>
+#include <iostream>
+#include <string>
 #include <set>
 #include <list>
 #include <queue>
@@ -9,147 +11,59 @@
 #include <state.h>
 #include <poolalloc.h>
 #include <cstring>
+#include "automata_types.h"
 using namespace std;
-#include <boost/unordered_map.hpp>
-#include <boost/unordered_set.hpp>
-#include <boost/shared_array.hpp>
-class PreciseDistinguashbleStatesCollection{
-    typedef boost::unordered::unordered_set<pair<size_t,size_t> > set_type;
-    typedef boost::unordered::unordered_map<size_t, set_type > map_type;
-    map_type Map;
-public:
-    bool exist(State* f, State* s){
-        if(Map.count((size_t)f^(size_t)s)){
-            if(f<s){
-                State* t=s;
-                s=f;
-                f=t;
-            }
-            pair<size_t,size_t> pp((size_t)f,(size_t)s);
-            if(Map[(size_t)f^(size_t)s].count(pp))return true;
-        //Map[(size_t)f^(size_t)s].insert(pair<size_t,size_t>((size_t)f,(size_t)s));
-        }
-        return false;
-    }
-    void insert(State* f, State* s){
-        if(f<s){
-            State* t=s;
-            s=f;
-            f=t;
-        }
-        Map[(size_t)f^(size_t)s].insert(pair<size_t,size_t>((size_t)f,(size_t)s));
-    }
-};
-class UnPreciseDistinguashbleStatesCollection{
-    typedef boost::unordered::unordered_set<size_t> set_type;
-    set_type Set;
-public:
-    bool exist(State* f, State* s){
-        return Set.count((size_t)f^(size_t)s);
-    }
-    void insert(State* f, State* s){
-        Set.insert((size_t)f^(size_t)s);
-    }
-};
-typedef UnPreciseDistinguashbleStatesCollection DistinguashbleStatesCollection;
 class Automata{
     State* start;
     list<State*> finals;
     bool min;
     bool dfa;
     set<State*> all_states;
-    void Clear();
-    typedef set<State*> TODFAStateType;
-    typedef map<char, TODFAStateType > TODFATarnsitions;
-    typedef pair< TODFAStateType, TODFATarnsitions > TODFAStateANDTransitions;
-
-    State* CreateState(bool final=false, set<State*>* state_set=__null);
-    void DeleteState(State* state, bool erase=true);
-    set<State*> GetReachableStates();
-
-    bool GetNewTransmitiomForEpsilonOutState(State* state);
-    void GetSetOfStetesWhithEpsilonOut(set<State*>& StatesWhithEpsilonLinkOut);
-    void EpsilonNFAToNFA();
-    void getNewStateTypeTransitions(TODFAStateType& state, TODFATarnsitions& transitions);
-    void getNewPowerSetsStete(list<TODFAStateANDTransitions > &states);
-    State* createNewStaesForDFA(list<TODFAStateANDTransitions >& new_set_states, set<State*>& new_states, list<State*>& new_finals, map<set<State*>,  State* >& newToOldStatesMap);
+    void clear(bool delete_states=true);
+    void delete_state(State* state, bool erase=true);
+    void epsilon_nfa_to_nfa();
     //new_set_states
-    void createTransitionsForDFA(list<TODFAStateANDTransitions >& new_states, map<set<State*>,  State* >& newToOldStatesMap);
-    bool IsDependentState(State* fs,State* ss,DistinguashbleStatesCollection&  DependentStates);
-    bool IsIndependent(State* fstate,State* sstate,DistinguashbleStatesCollection& dependentStates);
-    void MergeStatesOutputSignals(State* fstate,State* sstate);
-    void MergeStatesInputSignals(State* fstate,State* sstate);
-    void MergeStates(State* fstate,State* sstate);
-    void GlueStates(DistinguashbleStatesCollection& dependentStates);
-    void getDependedStates(DistinguashbleStatesCollection& dependentStates);
-    void OptimizeDFA();
+    void optimize_dfa();
+    void delete_unachievable();
+    State* suffix_minimize_merge_states(vector<State*>& mergebal_states);
+    void merge_states_output_signals(State* fstate,State* sstate);
+    void merge_states(State* fstate,State* sstate);
+    set<State*>  glue_states(DistinguashbleStatesCollection& dependentStates);
 public:
-    Automata(Automata& a_obj){
-        start=a_obj.start;
-        finals=a_obj.finals;
-        min=a_obj.min;
-        dfa=a_obj.dfa;
-        all_states=a_obj.all_states;
+    State* create_state(bool final=false, set<State*>* state_set=0);
+    Automata(Automata& a_obj);
+    Automata& operator=(Automata& a_src);
+    void clone_to(Automata& dist);
+    bool to_c_code(ostream& ost,std::string& libname);
+    State* step(State* state, char signal);
+    ~Automata();
 
-        a_obj.start=0;
-        a_obj.finals.clear();
-        a_obj.all_states.clear();
-
-    }
-    Automata& operator=(Automata& a_src){
-        start=a_src.start;
-        finals=a_src.finals;
-        min=a_src.min;
-        dfa=a_src.dfa;
-        all_states=a_src.all_states;
-
-        a_src.start=0;
-        a_src.finals.clear();
-        a_src.all_states.clear();
-
-        return *this;
-    }
-
-    bool ToCCode(ostream& ost,std::string& libname);
-    boost::shared_array<char> ToByteCode(int *len);
-    static bool FindFirstByByteCode(char* blob,char* start, char* last,char** first_pos, char** last_pos, bool lazy);
-    State* GetStart(){return start;}
-    State* Step(State* state, char signal){
-        vector<Transition>& transition=state->getTransitions();
-        vector<Transition>::iterator eit=transition.end();
-        for(vector<Transition>::iterator bit=transition.begin();bit!=eit;++bit){
-            if(bit->signal==signal){
-                return bit->to;
-            }
-        }
-        return NULL;
-    }
-    ~Automata(){Clear();}
-
-    Automata(bool epsilon);
+    Automata(bool epsilon=true);
     Automata(char Char);
-    void Concatinate(char signal);
-    void Concatinate(Automata& automata);
-    void Union(char signal);
-    void Union(Automata& automata);
+    Automata& concatinate(char signal);
+    Automata& concatinate(Automata& automata);
+    Automata& operator+(char signal);//eco concat
+    Automata& operator+(Automata& automata);
+    Automata& Union(char signal);
+    Automata& Union(Automata& automata);
+    Automata& operator*(char signal);//eco Union
+    Automata& operator*(Automata& automata);
 
 
-    void KneeStar();
+    Automata& knee_star();
+    void to_dfa();
+    void minimize();
+    bool is_minimized();
+    void suffix_minimize();
+    bool is_dfa();
 
-    void ToDFA();
-
-    void Minimize(){
-        //for dfa only
-        min=true;
-    }
-
-    bool isMinimized(){
-        return min;
-    }
-
-    bool isDFA(){
-       return dfa;
-    }
+    State* get_start();
+    bool exact_match(char* text,size_t len);
+    pair<char*, char*> index_in(char* text, size_t len,bool lazy=true);
+    bool has_unachievable_states();
+    bool has_dead_end_states();
+    ostream& operator>>(ostream& os);
+    istream& operator<<(istream& is);
 };
 
 #endif // AUTOMATA_H

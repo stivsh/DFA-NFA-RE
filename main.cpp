@@ -1,3 +1,4 @@
+#define DEBUG 1
 #ifdef UNIX
     #define PLUS_HOME( x ) "/home/stiv/"#x
 #else
@@ -14,13 +15,13 @@
 #include <sstream>
 #include <string>
 #include <QByteArray>
-//#include <boost/regex.hpp>
 #include <cstring>
 #include <automata.h>
 #include <common.h>
-#include <patternchecker.h>
-#include <boost/shared_array.hpp>
-const int BigTextLen=1024*1024*200;//200
+#include "find_lib.h"
+#include "reparser.h"
+const int DekimetersCount=300;
+const int BigTextLen=1024*1024*20;
 int union_time;
 int dfa_time;
 int epsilon_time;
@@ -33,14 +34,22 @@ vector<QTextCodec*> getTextCodecs(){
 }
 
 int readWordList(vector<QString>& words){
-
     QFile file(PLUS_HOME(badwords.txt));
     if (!file.open(QIODevice::ReadOnly |QIODevice::Text))return -1;
     QTextStream in(&file);
     in.setCodec("Windows-1251");//TODO get codec name as parameter
     while(!in.atEnd()){
         QString line = in.readLine();
-        words.push_back(line);
+        bool repeats=false;
+        for(size_t i=0;i!=words.size();++i){
+            if(words[i].indexOf(line)!=-1||line.indexOf(words[i])!=-1){
+                repeats=true;
+                break;
+            }
+        }
+        if(!repeats && line.size()<DekimetersCount)
+            words.push_back(line);
+
     }
     file.close();
     std::random_shuffle(words.begin(),words.end());
@@ -56,17 +65,17 @@ vector<QString> getWordList(vector<QString>& words,size_t len){
 char* createText(size_t len, vector<QString>& words, list<char*>* bad_words_pos=0){
     vector<QTextCodec*> text_codecs=getTextCodecs();
     char* bigText= new char[len];
-    memset(bigText,0,len-1);len-=1;
+    memset(bigText,93,len-1);len-=1;
      //создаём длинную, длинную сироку содержащую эти слова, сол случайно изменёнными регистрами символов
     char *pos=bigText;
     while(true){
-        if(rand()%40!=0){//вставляем случайную 300 символьную последовательность
-            for(int i=0;i!=100;++i){
+        if(rand()%100>20){//вставляем случайную 300 символьную последовательность
+            for(int i=0;i!=DekimetersCount;++i){
                 if(pos+i>=bigText+len-1)break;
-                char c=93;//93+rand()%34;
+                char c=93;
                 *(pos+i)=c;
             }
-            pos+=100;
+            pos+=DekimetersCount;
         }else{//вставляем случайное слово
             int index=rand()%words.size();
             QTextCodec* codec=text_codecs[rand()%text_codecs.size()];
@@ -79,9 +88,9 @@ char* createText(size_t len, vector<QString>& words, list<char*>* bad_words_pos=
     }
     return bigText;
 }
-void chreate_char_atomata(char* c,size_t len,Automata& charatom){
+void _chreate_char_atomata(char* c,size_t len,Automata& charatom){
     for(size_t i=0;i!=len;++i){
-        charatom.Concatinate(c[i]);
+        charatom.concatinate(c[i]);
     }
 }
 void createAtoumata(vector<QString>& word_list,Automata& aut){//TODO вовсех кодировках со всеми регистрами
@@ -90,7 +99,7 @@ void createAtoumata(vector<QString>& word_list,Automata& aut){//TODO вовсе�
     for(size_t str_ind=0;str_ind!=word_list.size();++str_ind){
         QString str=word_list[str_ind];
         Automata wordAut(true);
-        for(size_t ch_ind=0; ch_ind!=str.size();++ch_ind){
+        for(int ch_ind=0; ch_ind!=str.size();++ch_ind){
             QString tmp_str(str.at(ch_ind));
             Automata tmp_automata(false);
             set<QByteArray> ba_set;
@@ -98,102 +107,119 @@ void createAtoumata(vector<QString>& word_list,Automata& aut){//TODO вовсе�
                 QByteArray ba=text_codecs[cod_ind]->fromUnicode(tmp_str.toUpper());
                 if(!ba_set.count(ba)){
                     Automata  atom(true);
-                    chreate_char_atomata(ba.data(), ba.size(),atom);
+                    _chreate_char_atomata(ba.data(), ba.size(),atom);
                     tmp_automata.Union(atom);
                     ba_set.insert(ba);
                 }
                 ba=text_codecs[cod_ind]->fromUnicode(tmp_str.toLower());
                 if(!ba_set.count(ba)){
                     Automata  atom(true);
-                    chreate_char_atomata(ba.data(), ba.size(),atom);
+                    _chreate_char_atomata(ba.data(), ba.size(),atom);
                     tmp_automata.Union(atom);
                     ba_set.insert(ba);
                 }
             }
-            wordAut.Concatinate(tmp_automata);
+            wordAut.concatinate(tmp_automata);
         }
         aut.Union(wordAut);
     }
+
+    cout<<"has_dead_end_states b_dfa:"<<aut.has_dead_end_states()<<endl;
+    cout<<"has_unachievable_states b_dfa:"<<aut.has_unachievable_states()<<endl;
     union_time=timeMesure(t);
     t=clock();
-    aut.ToDFA();
+    aut.to_dfa();
     dfa_time=timeMesure(t);
+    cout<<"has_dead_end_states a_dfa:"<<aut.has_dead_end_states()<<endl;
+    cout<<"has_unachievable_states a_dfa:"<<aut.has_unachievable_states()<<endl;
+    aut.suffix_minimize();
+    cout<<"has_dead_end_states a_sm:"<<aut.has_dead_end_states()<<endl;
+    cout<<"has_unachievable_states a_sm:"<<aut.has_unachievable_states()<<endl;
 }
-void findAll(char* text,size_t len,PatternChecker& pc,list<char*>* bad_words_pos=0){
-    pair<char*, char*> par(NULL,NULL);
-    char* next_pos=text;
-    char* lastsimbol=text+len-1;
-    do{
-        par=pc.IndexIn(next_pos,lastsimbol-next_pos+1,false);
-        if(par.first){
-            next_pos=par.second+1;
-            if(bad_words_pos)bad_words_pos->push_back(par.first);
-            if(next_pos>=lastsimbol)return;
-        }
-    }while(par.first!=NULL);
+inline size_t text_len(char* first, char* last){
+    return last-first+1;
 }
-/*void LibfindAll(char* text,size_t len,list<char*>* bad_words_pos=0){
-    char* next=text;
-    do{
-        char* first_pos;
-        char* last_pos;
-        FindFirst(next, text+len-1,&first_pos,&last_pos, false);
-        if(!last_pos)return;
-        if(bad_words_pos)bad_words_pos->push_back(first_pos);
-        next=last_pos+1;
-    }while(next<text+len);
+inline char* last_symbol(char* text, size_t len){
+    return text+len-1;
+}
 
-}*/
-void LibfindBlob(boost::shared_array<char> &blob,char* text,size_t len,list<char*>* bad_words_pos=0){
-    char* next=text;
-    do{
-        char* first_pos;
-        char* last_pos;
-        bool res=Automata::FindFirstByByteCode(&(blob[0]),next,text+len,&first_pos,&last_pos,false);
-        if(!res)return;
-        if(bad_words_pos)bad_words_pos->push_back(first_pos);
-        next=last_pos+1;
-    }while(next<text+len);
-}
+
+
 bool StupidOptimaTest(){
     return true;
 }
+void find_all(char* text,size_t len,Automata& aut,list<pair<char*,char*> >* bad_words_pos=0){
+    pair<char*, char*> par(0,0);
+    char* next_pos=text;
+    char* lastsimbol=last_symbol(text, len);
+    do{
+        par=aut.index_in(next_pos,text_len(next_pos,lastsimbol),false);
+        if(par.first){
+            next_pos=par.second;
+            if(bad_words_pos)bad_words_pos->push_back(make_pair(par.first,par.second));
+            if(next_pos>=lastsimbol)return;
+        }
+    }while(par.first!=0);
+}
+void find_all_lib(char* text,size_t len,list<pair<char*,char*> >* bad_words_pos=0){
+    char* begin=0;
+    char* end=0;
+    char* next_pos=text;
+    char* lastsimbol=last_symbol(text, len);
+    do{
 
+        find_first_lib(next_pos,lastsimbol,&begin,&end,false);
+        if(end){
+            next_pos=end;
+            if(bad_words_pos)bad_words_pos->push_back(make_pair(begin,end));
+            if(next_pos>=lastsimbol)return;
+        }
+    }while(end!=0);
+
+}
 bool StupidTest(){
-    Automata aut(false);
-    Automata a1(true);
-    a1.Concatinate('a');
-    aut.Union(a1);
-    Automata a2('b');
-    aut.Union(a2);
-
-    Automata a3('c');
-    Automata a4('g');
-    a3.Concatinate(a4);
-    aut.Concatinate(a3);
+    //проверить тут parce re
+    Automata aut;
+    vector<QTextCodec*> text_codecs;
+    text_codecs.push_back(QTextCodec::codecForName("Windows-1251"));
+    parcere("a|bcg",aut,text_codecs);
 
     string s1="abcg";
     string s2="acg";
     string s3="bcg";
     string s4="bc";
     string s5="ag";
-    aut.ToDFA();
-    PatternChecker pc(aut);
-    pair<char*,char*> p=pc.IndexIn(const_cast<char*>(s1.c_str()),s1.size());
+    aut.to_dfa();
+    pair<char*,char*> p=aut.index_in(const_cast<char*>(s1.c_str()),s1.size());
     if(p.first==s1.c_str())
         return false;
-    p=pc.IndexIn(const_cast<char*>(s2.c_str()),s2.size());
+    p=aut.index_in(const_cast<char*>(s2.c_str()),s2.size());
     if(p.first!=s2.c_str())
         return false;
-    p=pc.IndexIn(const_cast<char*>(s3.c_str()),s3.size());
+    p=aut.index_in(const_cast<char*>(s3.c_str()),s3.size());
     if(p.first!=s3.c_str())
         return false;
-    p=pc.IndexIn(const_cast<char*>(s4.c_str()),s4.size());
+    p=aut.index_in(const_cast<char*>(s4.c_str()),s4.size());
     if(p.first)
         return false;
-    p=pc.IndexIn(const_cast<char*>(s5.c_str()),s5.size());
+    p=aut.index_in(const_cast<char*>(s5.c_str()),s5.size());
     if(p.first)
         return false;
+
+    //opimize stupid test
+    //MIHA
+    //MAHA
+    Automata a10(true);
+    Automata a20(true);
+    Automata a30(true);
+    a10+'M'+'I'+'H'+'A';
+    a20+'M'+'A'+'H'+'A';
+    a30+'K'+'P'+'A';
+    a10*a20;
+    a10.to_dfa();
+    a10*a30;
+    a10.to_dfa();
+    a10.suffix_minimize();
     return true;
 }
 bool LittelBitLessStupidTest(){
@@ -206,14 +232,13 @@ bool LittelBitLessStupidTest(){
   char* bigText=createText(1024*2,word_list,&bad_words_pos);
   Automata aut(false);
   createAtoumata(word_list,aut);
-
-  PatternChecker pc(aut);
-  list<char*> new_bad_words_pos;
-  findAll(bigText,1024*2,pc,&new_bad_words_pos);
+  list<pair<char*,char*> > new_bad_words_pos;
+  find_all(bigText,1024*2,aut,&new_bad_words_pos);
 
   delete[] bigText;
-  return new_bad_words_pos.size()<=bad_words_pos.size()&&new_bad_words_pos.size()!=0&&new_bad_words_pos.size()>(bad_words_pos.size()-5);
+  return new_bad_words_pos.size()<=bad_words_pos.size()&&new_bad_words_pos.size()!=0;
 }
+
 int main(int argc, char *argv[])
 {   
     (void)argc;(void)argv;
@@ -230,14 +255,16 @@ int main(int argc, char *argv[])
     fsunion_time.open(PLUS_HOME(union_time.txt));
     fsdfa_time.open(PLUS_HOME(dfa_time.txt));
     fsepsilon_time.open(PLUS_HOME(epsilon_time.txt));
-    for(size_t word_count=3600;word_count<=3600;word_count+=50){
+    for(size_t word_count=3000;word_count<=3000;word_count+=50){
     //читаем список плохох слов
         vector<QString> bad_words;
         vector<QString> word_list;
         readWordList(bad_words);
         word_list=getWordList(bad_words,word_count);
         list<char*> bad_words_pos_in_text;
-        char* bigText=createText(BigTextLen,word_list,&bad_words_pos_in_text);
+        char* bigText1=createText(BigTextLen,word_list,&bad_words_pos_in_text);
+        char* bigText2=new char[BigTextLen];
+        memcpy(bigText2,bigText1,BigTextLen);
         cout<<"word_in_text:"<<bad_words_pos_in_text.size()<<endl;
         clock_t t=clock();
         Automata aut(false);
@@ -262,35 +289,62 @@ int main(int argc, char *argv[])
         ofstream fsLibC;
         fsLibC.open(PLUS_HOME(/ttt/untitled/find_lib.c));
         std::string lib_name="find_lib";
-        aut.ToCCode(fsLibC, lib_name);
+        aut.to_c_code(fsLibC, lib_name);
         fsLibC.close();
         cout<<"create_c_file:"<<word_count<<" "<<timeMesure(t)<<endl;
 
-        PatternChecker pc(aut);
         t=clock();
-        list<char*> bad_words_pos;
-        findAll(bigText,BigTextLen,pc,&bad_words_pos);
+        list<pair<char*,char*> > bad_words_pos;
+        find_all_lib(bigText1,BigTextLen,&bad_words_pos);
+        cout<<"seqrch_lib_time:"<<word_count<<" "<<timeMesure(t)<<endl;
+        cout<<"find:"<<bad_words_pos.size()<<endl;
+        for(list<pair<char*,char*> >::iterator it=bad_words_pos.begin();it!=bad_words_pos.end();++it){
+            for(char* c=it->first;c!=it->second;++c)
+                *c=93;
+        }
+        bool bigText1_test=true;
+        for(char* c=bigText1;c!=bigText1+BigTextLen-2;++c){
+            if(*c!=93){
+                bigText1_test=false;
+                break;
+            }
+        }
+        cout<<"bigText1 test:"<<bigText1_test<<endl;
+        ofstream out;
+        out.open(PLUS_HOME(aut.dat),ios_base::out|ios_base::trunc|ios_base::binary);
+        aut>>out;
+        out.close();
+        ifstream ifs;
+        ifs.open(PLUS_HOME(aut.dat),ios_base::in|ios_base::binary);
+        Automata aut2;
+        aut2<<ifs;
+        ifs.close();
+        bad_words_pos.clear();
+        t=clock();
+        find_all(bigText2,BigTextLen,aut2,&bad_words_pos);
 
         fsseqrch_time<<word_count<<" "<<(time=timeMesure(t))<<endl;
         cout<<"seqrch_time:"<<word_count<<" "<<time<<endl;
         cout<<"find:"<<bad_words_pos.size()<<endl;
-
-
-        t=clock();
-        list<char*> lib_f_wor;
-        int blob_len;
-        boost::shared_array<char> blob=aut.ToByteCode(&blob_len);
-        t=clock();
-        LibfindBlob(blob,bigText,BigTextLen,&lib_f_wor);
-        cout<<"blob_find_time:"<<lib_f_wor.size()<<":time:"<<timeMesure(t)<<endl;
-
+        for(list<pair<char*,char*> >::iterator it=bad_words_pos.begin();it!=bad_words_pos.end();++it){
+            for(char* c=it->first;c!=it->second;++c)*c=93;
+        }
+        bool bigText2_test=true;
+        for(char* c=bigText2;c!=bigText2+BigTextLen-2;++c){
+            if(*c!=93){
+                bigText2_test=false;
+                break;
+            }
+        }
+        cout<<"bigText2 test:"<<bigText2_test<<endl;
 
         fsseqrch_time.flush();
         fsgen_time.flush();
         fsunion_time.flush();
         fsdfa_time.flush();
         fsepsilon_time.flush();
-        delete[] bigText;
+        delete[] bigText1;
+        delete[] bigText2;
 
     }
     return 0;
